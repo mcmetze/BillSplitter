@@ -1,0 +1,20 @@
+- UI/control flow
+	-Take or choose photo
+	-Crop
+	-Segmentation / OCR
+	-Itemize orders and totals	
+	-create people/cards of people who ordered
+	-drag 'n drop to match orders/totals to people
+
+- Options
+	-add tax per person based on their own total
+	-add tip per person, based on their own total
+	-option to correct any OCRd values
+	
+
+- Issues
+	-wrong orders on the reciept 
+	-bad printer/ink/text issues
+	-folds/creases 
+	-bad lighting
+	-food/water damage

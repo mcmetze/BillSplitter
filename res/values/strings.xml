@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">BillSplitter</string>
+    <string name="action_settings">Settings</string>
+    <string name="camButtonText">OCR!</string>
+    <string name="galleryButtonText">Gallery</string>
+    <string name="text_hint">OCRed Text will appear here</string>
+
+</resources>
