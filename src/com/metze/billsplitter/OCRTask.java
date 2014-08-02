@@ -42,7 +42,7 @@ public class OCRTask extends AsyncTask<Void, Integer, Bitmap>
     private int mImageHeight;
     
     private Mat mMatToProcess;
-    private List<Rect> bboxes;
+    private List<Rect> bboxes;	//made this a member temporarily to easily debug visually
     
     public OCRTask(Context context)
     {
@@ -61,31 +61,37 @@ public class OCRTask extends AsyncTask<Void, Integer, Bitmap>
 
         preProcess();
         checkForTrainedDataFile();
-        segmentImage();
+        getText();
 
-        return overlayRects();
+        Bitmap returnBmp = overlayRects();
+        return returnBmp;
     }
     
     private Bitmap overlayRects()
     {
-    	Utils.matToBitmap(mMatToProcess, mBmp, true);
     	Bitmap bmp = mBmp.copy(mBmp.getConfig(), true);
     	for(Rect r : bboxes)
     	{
-    		for(int x = r.left; x<r.right; ++x)
+    		int top = Math.max(0, r.top);
+    		int bottom = Math.min(mImageHeight-1, r.bottom);
+    		int left = Math.max(0, r.left);
+    		int right = Math.min(mImageWidth-1, r.right);
+    		
+    		for(int x = left; x<right; ++x)
     		{
-    			bmp.setPixel(x, r.top, Color.RED);
-    			bmp.setPixel(x, r.bottom, Color.RED);
+    			bmp.setPixel(x, top, Color.RED);
+    			bmp.setPixel(x, bottom, Color.RED);
     		}
-    		for(int y = r.top; y<r.bottom; ++y)
+    		for(int y = top; y<bottom; ++y)
     		{
-    			bmp.setPixel(r.left, y, Color.RED);
-    			bmp.setPixel(r.right, y, Color.RED);
+    			bmp.setPixel(left, y, Color.RED);
+    			bmp.setPixel(right, y, Color.RED);
     		}
     	}
     	
     	return bmp;
     }
+    
 
     @Override
 	protected void onProgressUpdate(Integer... values) {
@@ -176,52 +182,16 @@ public class OCRTask extends AsyncTask<Void, Integer, Bitmap>
 		}
 		
 	}
-
-    private List<Rect> getBoundingBoxes(Mat in)
-    {
-    	Log.i(TAG, "getBoundindBoxes");
-    	List<MatOfPoint> contours = new ArrayList<MatOfPoint>();
-    	Imgproc.findContours(in, contours, new Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
-    	
-    	List<Rect> boundingRects = new ArrayList<Rect>(contours.size());
-
-		//find bounding rects of each contour/connected comp and add it to the list to be returned
-    	for(MatOfPoint curComp : contours)
-    	{
-    		org.opencv.core.Rect rectObj = Imgproc.boundingRect(curComp);
-            Rect boundRect = new Rect(rectObj.x, rectObj.y+rectObj.height, rectObj.x+rectObj.width, rectObj.y);
-			boundingRects.add(boundRect);
-    	}
-    	
-    	return boundingRects;
-    }
-    
-    private void segmentImage()
-    {	
-    	Mat mask = new Mat();
-    	Imgproc.dilate(mMatToProcess, mask, Imgproc.getStructuringElement(Imgproc.CV_SHAPE_RECT, new Size(mImageWidth, 2)));
-    	
-    	bboxes = getBoundingBoxes(mask);
-
-    	for(Rect r : bboxes)
-    	{
-    		Mat crop = mMatToProcess.submat(r.bottom, r.top, r.left, r.right);
-    		Bitmap region = Bitmap.createBitmap(crop.cols(), crop.rows(), mBmp.getConfig());
-    		Utils.matToBitmap(crop, region, true);
-    		getText(region);
-    	}
-    	
-	
-    }
 	
 	private void preProcess()
     {
     	Log.i(TAG, "preProcess");
     	Imgproc.cvtColor(mMatToProcess, mMatToProcess, Imgproc.COLOR_RGBA2GRAY);	
-    
+
     	Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5,5));
     	Mat temp = new Mat(); 
 
+    	//erode away any blobs that are noise
     	Imgproc.resize(mMatToProcess, temp, new Size(mImageWidth/4, mImageHeight/4));
     	Imgproc.morphologyEx(temp, temp, Imgproc.MORPH_CLOSE, kernel);
     	Imgproc.resize(temp, temp, new Size(mImageWidth, mImageHeight));
@@ -229,26 +199,61 @@ public class OCRTask extends AsyncTask<Void, Integer, Bitmap>
     	Core.divide(mMatToProcess, temp, temp, 1, CvType.CV_32F); // temp will now have type CV_32F
     	Core.normalize(temp, mMatToProcess, 0, 255, Core.NORM_MINMAX, CvType.CV_8U);
 
-    	Imgproc.threshold(mMatToProcess, mMatToProcess, -1, 255, Imgproc.THRESH_BINARY_INV | Imgproc.THRESH_OTSU);    	
+    	Imgproc.threshold(mMatToProcess, mMatToProcess, -1, 255, Imgproc.THRESH_BINARY_INV | Imgproc.THRESH_OTSU);    
+    	
+    	Utils.matToBitmap(mMatToProcess, mBmp);
     }
 
-    private String[] getText(Bitmap image)
+    private String[] getText()
     {
 		TessBaseAPI baseApi = new TessBaseAPI();
-		baseApi.setDebug(true);
 		baseApi.init(DATA_PATH, "eng");
-		baseApi.setImage(image);
+		baseApi.setImage(mBmp);
 
-		String recognizedText = baseApi.getUTF8Text();
-		baseApi.end();
+		Pixa p = baseApi.getTextlines();
 		
-		String[] words = recognizedText.split(" ");
-		for(String w : words)
+		//for now use the heuristic that lines shorter than half the width have unnecessary info
+		for(int i=0; i<p.size(); ++i)
 		{
-			System.out.print(w+", ");
+			Rect cur = p.getBoxRect(i);
+			if(cur.width() >= mImageWidth/2)	
+				bboxes.add(cur);
 		}
-		System.out.println("");
-		
+
+		//idea is the largest gap between words on the line separates the items from the prices
+		for(Rect lineRect : bboxes)
+		{
+			baseApi.setRectangle(lineRect);
+			List<Rect> wordRects = baseApi.getWords().getBoxRects();
+			int largestGap = 0;
+			int dividerIndex = 0;
+			for(int i=1; i<wordRects.size(); ++i)
+			{
+				int gap = wordRects.get(i).left - wordRects.get(i-1).right;
+				if(gap > largestGap)
+				{
+					largestGap = gap;
+					dividerIndex = i;
+				}
+			}
+
+			String[] lineWords = baseApi.getUTF8Text().split(" ");
+			for(int i=0; i<lineWords.length; ++i)
+			{
+				if(i < dividerIndex)
+				{
+					System.out.println("item: "+lineWords[i]);
+				}
+				else
+				{
+					System.out.println("price: "+lineWords[i]);
+				}
+			}
+			
+		}
+		baseApi.end();
+
+		String[] words = null;	//placeholder
 		return words;
     }
     
